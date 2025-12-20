@@ -1,9 +1,9 @@
 // app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PhotoItem from "@/components/PhotoItem";
-import StickyBottomSvg from "@/components/StickyBottomSvg";
+import StickyBottomSvg from "@/components/StickyBottomSvg"; // もし使ってるなら
 import { supabase } from "@/lib/supabaseClient";
 
 type DateMap = Record<string, string>;
@@ -14,7 +14,7 @@ const BUCKET = "photos";
 const FOLDER = "2025";
 const GREEN = "#78FF6E";
 
-// 001 の figma 基準
+// 001 の figma 基準（あなたがくれた値）
 const BASE = {
   frameW: 390,
 
@@ -26,26 +26,26 @@ const BASE = {
   btn: { left: 260, top: 869, width: 100, height: 20 },
 };
 
-// 写真と写真の間隔 60px → 440 + 60 = 500
-const GAP_Y = 440 + 60;
+const GAP_Y = 440 + 60; // 写真と写真の間隔 60px
 
 const pad3 = (n: number) => String(n).padStart(3, "0");
 const getName = (i: number) => `${pad3(i)}.jpg`;
 const dlKey = (name: string) => `camera-roll-downloaded-${FOLDER}-${name}`;
 
 export default function Page() {
-  const frameRef = useRef<HTMLDivElement | null>(null);
-
   const [dateMap, setDateMap] = useState<DateMap>({});
   const [urlMap, setUrlMap] = useState<UrlMap>({});
   const [downloadedMap, setDownloadedMap] = useState<DlMap>({});
 
-  // 表示する枚数（とりあえず 001〜095）
+  // ✅ 追加：body-secondary3 の表示トグル
+  const [showBodySecondary3, setShowBodySecondary3] = useState(false);
+
+  // ✅ 表示する枚数（必要なら増やしてOK）
   const N = 95;
 
   const names = useMemo(() => {
     return Array.from({ length: N }, (_, idx) => getName(idx + 1));
-  }, []);
+  }, [N]);
 
   useEffect(() => {
     // localStorage から復元（全枚数）
@@ -68,7 +68,7 @@ export default function Page() {
         if (res.ok) setDateMap((await res.json()) ?? {});
       } catch {}
 
-      // public url をまとめて作る
+      // public url をまとめて作る（getPublicUrlはローカル計算なので速い）
       const nextUrls: UrlMap = {};
       for (const name of names) {
         const path = `${FOLDER}/${name}`;
@@ -106,7 +106,6 @@ export default function Page() {
     <main className="min-h-screen bg-white py-10">
       {/* フレーム：390px */}
       <div
-        ref={frameRef}
         style={{
           position: "relative",
           width: BASE.frameW,
@@ -145,19 +144,9 @@ export default function Page() {
           draggable={false}
         />
 
-        {/* ✅ body-secondary2（指定：W330 H180 X30 Y1505）
-            スクロールして「底辺が画面下に来たら」その位置で固定 */}
-        <StickyBottomSvg
-          frameRef={frameRef}
-          src="/SVG/body-secondary2.svg"
-          rect={{ left: 30, top: 8869, width: 330, height: 180 }}
-          zIndex={99999} // いちばん上に乗せる
-        />
-
         {/* 001〜095 */}
         {names.map((name, idx) => {
           const y = idx * GAP_Y;
-
           const imageUrl = urlMap[name];
           if (!imageUrl) return null;
 
@@ -194,6 +183,70 @@ export default function Page() {
             />
           );
         })}
+
+        {/* --- ここからが「スクロールしても固定」レイヤー --- */}
+        {/* ✅ fixed専用レイヤー（幅390で中央寄せ。ここ基準でX/Yが効く） */}
+        <div
+          style={{
+            position: "fixed",
+            left: "50%",
+            top: 0,
+            transform: "translateX(-50%)",
+            width: BASE.frameW,
+            height: "100vh",
+            zIndex: 9999,
+            pointerEvents: "none", // ここは基本クリック無効（ボタンだけ有効化する）
+          }}
+        >
+          {/* ✅ body-secondary3（最初は非表示、ボタンで表示） */}
+          {showBodySecondary3 && (
+            <img
+              src="/SVG/body-secondary3.svg"
+              alt="body-secondary3"
+              draggable={false}
+              style={{
+                position: "absolute",
+                left: 30,
+                top: 364,
+                width: 207,
+                height: 153,
+                display: "block",
+                pointerEvents: "none",
+              }}
+            />
+          )}
+
+          {/* ✅ button.svg：押せるようにここだけ pointerEvents を戻す */}
+          <button
+            type="button"
+            onClick={() => setShowBodySecondary3((v) => !v)}
+            style={{
+              position: "absolute",
+              left: 11,
+              top: 365,
+              width: 9,
+              height: 10,
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              pointerEvents: "auto",
+            }}
+            aria-label="toggle body-secondary3"
+          >
+            <img
+              src="/SVG/button.svg"
+              alt="button"
+              draggable={false}
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "block",
+              }}
+            />
+          </button>
+        </div>
+        {/* --- fixedレイヤーここまで --- */}
       </div>
     </main>
   );
