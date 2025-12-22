@@ -1,15 +1,11 @@
+// components/PhotoItem.tsx
 "use client";
 
 import Image from "next/image";
 import { useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-type Rect = {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-};
+type Rect = { left: number; top: number; width: number; height: number };
 
 type Props = {
   name: string;
@@ -22,10 +18,14 @@ type Props = {
   buttonSvg: string;
   buttonRect: Rect;
 
-  downloaded: boolean;        // ← page から渡される
-  onDownloaded: () => void;   // ← page に通知
+  downloaded: boolean;
+  onDownloaded: () => void;
 
   green: string;
+
+  // ✅ あなたの「写真のみページ」に飛ばす先（今の仕様に合わせて変更してOK）
+  // 例: /p/001 みたいに作ってるならそれに合わせる
+  singlePhotoPagePath?: (name: string) => string;
 };
 
 const BUCKET = "photos";
@@ -42,44 +42,97 @@ export default function PhotoItem({
   downloaded,
   onDownloaded,
   green,
+  singlePhotoPagePath = (n) => `/photo?name=${encodeURIComponent(n)}`, // ←必要ならここ変えて
 }: Props) {
   const [downloading, setDownloading] = useState(false);
 
-  /**
-   * PC向け：Supabase download → a.click()
-   * （モバイルは別方式で既に解決済み想定）
-   */
-  const downloadViaSupabase = async () => {
-    const path = `${FOLDER}/${name}`;
-    const { data, error } = await supabase
-      .storage
-      .from(BUCKET)
-      .download(path);
+  const isMobile = () => {
+    if (typeof navigator === "undefined") return false;
+    const ua = navigator.userAgent || "";
+    return /iPhone|iPad|iPod|Android/i.test(ua);
+  };
 
+  const fetchBlobFromSupabase = async (): Promise<Blob> => {
+    const path = `${FOLDER}/${name}`;
+    const { data, error } = await supabase.storage.from(BUCKET).download(path);
     if (error) throw error;
     if (!data) throw new Error("No blob returned");
+    return data;
+  };
 
-    const url = URL.createObjectURL(data);
+  // ✅ PC向け：直ダウンロード
+  const downloadToFile = async () => {
+    const blob = await fetchBlobFromSupabase();
+    const url = URL.createObjectURL(blob);
+
     const a = document.createElement("a");
     a.href = url;
-    a.download = name;
+    a.download = name; // PCでは効く
     document.body.appendChild(a);
     a.click();
     a.remove();
+
     URL.revokeObjectURL(url);
   };
 
+  // ✅ スマホ向け：共有シート（できるなら files で）
+  const shareOrFallback = async () => {
+    // まず blob を用意
+    const blob = await fetchBlobFromSupabase();
+
+    const nav: any = navigator;
+    const canShareFiles =
+      typeof nav.share === "function" &&
+      typeof nav.canShare === "function" &&
+      nav.canShare({
+        files: [new File([blob], name, { type: blob.type || "image/jpeg" })],
+      });
+
+    if (canShareFiles) {
+      const file = new File([blob], name, { type: blob.type || "image/jpeg" });
+      await nav.share({
+        files: [file],
+        title: name,
+      });
+      return; // 共有できた
+    }
+
+    // filesが無理でも「URL共有」だけなら通ることがある
+    if (typeof nav.share === "function") {
+      try {
+        await nav.share({
+          title: name,
+          url: imageUrl, // 画像URLを共有（保存は共有先アプリ次第）
+        });
+        return;
+      } catch {
+        // shareキャンセル/失敗は次のfallbackへ
+      }
+    }
+
+    // ✅ 最終fallback：写真単体ページへ（ここがあなたの“方式B”）
+    window.location.href = singlePhotoPagePath(name);
+  };
+
   const handleDownload = async () => {
-    // ✅ すでにDL済み or 処理中なら何もしない
-    if (downloading || downloaded) return;
+    // ✅ ダウンロード済みは押せない
+    if (downloaded) return;
+    if (downloading) return;
 
     setDownloading(true);
     try {
-      await downloadViaSupabase();
-      onDownloaded(); // ← page側で状態＆保存
+      if (isMobile()) {
+        await shareOrFallback();
+        // 「共有が出た / 写真ページに飛んだ」時点で “保存したい意思” は成立なので消す運用ならここでOK
+        // もし「実際に保存できた時だけ消す」にしたいなら、単体ページ側で完了後に onDownloaded を呼ぶ設計にする
+        onDownloaded();
+      } else {
+        await downloadToFile();
+        onDownloaded();
+      }
     } catch (e) {
-      console.error("[DL] failed:", name, e);
-      alert("ダウンロードに失敗しました");
+      console.error("[DL] failed", name, e);
+      alert("保存/共有に失敗（ネットワーク/権限/対応状況）");
     } finally {
       setDownloading(false);
     }
@@ -87,7 +140,7 @@ export default function PhotoItem({
 
   return (
     <>
-      {/* 写真エリア */}
+      {/* 写真枠 */}
       <div
         style={{
           position: "absolute",
@@ -109,7 +162,7 @@ export default function PhotoItem({
           }}
         />
 
-        {/* 写真（未DL時のみ表示） */}
+        {/* 写真（downloaded=false の時だけ表示に戻したいならこのまま） */}
         {!downloaded && (
           <div
             style={{
@@ -125,6 +178,7 @@ export default function PhotoItem({
               fill
               sizes="330px"
               className="object-cover"
+              loading="eager"
             />
           </div>
         )}
@@ -151,20 +205,18 @@ export default function PhotoItem({
             fontSize: 32,
             lineHeight: 1,
             color: green,
-            whiteSpace: "nowrap",
             userSelect: "none",
+            whiteSpace: "nowrap",
           }}
         >
           {dateText}
         </div>
       </div>
 
-      {/* ダウンロードボタン */}
+      {/* download/share button（downloadedでも“表示はしていい”けど押せない） */}
       <button
-        type="button"
         onClick={handleDownload}
-        disabled={downloaded || downloading}
-        aria-label="download"
+        disabled={downloading || downloaded}
         style={{
           position: "absolute",
           left: buttonRect.left,
@@ -175,21 +227,16 @@ export default function PhotoItem({
           border: "none",
           background: "transparent",
           cursor: downloaded ? "default" : "pointer",
+          opacity: 1, // ✅ 薄くしない
           zIndex: 40,
-          // ❗ 薄くしない（指定どおり）
-          opacity: 1,
         }}
+        aria-label="download"
       >
         <img
           src={buttonSvg}
           alt="download"
+          style={{ width: "100%", height: "100%", display: "block" }}
           draggable={false}
-          style={{
-            width: "100%",
-            height: "100%",
-            display: "block",
-            pointerEvents: "none",
-          }}
         />
       </button>
     </>
