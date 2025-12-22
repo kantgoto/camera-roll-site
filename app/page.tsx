@@ -1,9 +1,8 @@
 // app/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import PhotoItem from "@/components/PhotoItem";
-import StickyBottomSvg from "@/components/StickyBottomSvg"; // もし使ってるなら
 import { supabase } from "@/lib/supabaseClient";
 
 type DateMap = Record<string, string>;
@@ -14,41 +13,56 @@ const BUCKET = "photos";
 const FOLDER = "2025";
 const GREEN = "#78FF6E";
 
-// 001 の figma 基準（あなたがくれた値）
+// figma 基準
 const BASE = {
   frameW: 390,
 
   title: { left: 30, top: 66, width: 330, height: 120 },
-  body: { left: 30, top: 211, width: 330, height: 138 },
+
+  // スクロールで動く
+  bodyPrimary2: { left: 30, top: 211, width: 330, height: 156 },
+
+  // 固定UI（button / body-secondary4）
+  toggleBtn: { left: 30, top: 398, width: 15, height: 17 },
+  bodySecondary4: { left: 30, top: 423, width: 195, height: 230 },
 
   photo: { left: 30, top: 424, width: 330, height: 440 },
   date: { left: 123, top: 629, width: 145, height: 31 },
   btn: { left: 260, top: 869, width: 100, height: 20 },
 };
 
-const GAP_Y = 440 + 60; // 写真と写真の間隔 60px
+// 写真と写真の間隔 60px
+const GAP_Y = 440 + 60; // 500
 
 const pad3 = (n: number) => String(n).padStart(3, "0");
 const getName = (i: number) => `${pad3(i)}.jpg`;
 const dlKey = (name: string) => `camera-roll-downloaded-${FOLDER}-${name}`;
 
 export default function Page() {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+
   const [dateMap, setDateMap] = useState<DateMap>({});
   const [urlMap, setUrlMap] = useState<UrlMap>({});
   const [downloadedMap, setDownloadedMap] = useState<DlMap>({});
 
-  // ✅ 追加：body-secondary3 の表示トグル
-  const [showBodySecondary3, setShowBodySecondary3] = useState(false);
+  // body-secondary4 の表示/非表示
+  const [showSecondary4, setShowSecondary4] = useState(false);
 
-  // ✅ 表示する枚数（必要なら増やしてOK）
+  // ✅ 固定UIを「フレーム左上基準」で置くためのオフセット
+  const [fixedBase, setFixedBase] = useState<{ left: number; top: number }>({
+    left: 0,
+    top: 0,
+  });
+
+  // 表示する枚数（001〜095）
   const N = 95;
 
   const names = useMemo(() => {
     return Array.from({ length: N }, (_, idx) => getName(idx + 1));
-  }, [N]);
+  }, []);
 
+  // localStorage 復元
   useEffect(() => {
-    // localStorage から復元（全枚数）
     const next: DlMap = {};
     for (const name of names) {
       try {
@@ -60,15 +74,14 @@ export default function Page() {
     setDownloadedMap(next);
   }, [names]);
 
+  // date + url
   useEffect(() => {
     const run = async () => {
-      // 日付マップ
       try {
         const res = await fetch("/photo-dates.json", { cache: "no-store" });
         if (res.ok) setDateMap((await res.json()) ?? {});
       } catch {}
 
-      // public url をまとめて作る（getPublicUrlはローカル計算なので速い）
       const nextUrls: UrlMap = {};
       for (const name of names) {
         const path = `${FOLDER}/${name}`;
@@ -92,6 +105,7 @@ export default function Page() {
     return `${yyyy},${mm},${dd}`;
   };
 
+  // download完了 → 保存 + 状態更新
   const handleDownloaded = (name: string) => {
     setDownloadedMap((prev) => ({ ...prev, [name]: true }));
     try {
@@ -99,13 +113,101 @@ export default function Page() {
     } catch {}
   };
 
-  // フレーム高さ（最後のブロックが全部入るぶん）
-  const frameH = BASE.btn.top + BASE.btn.height + (N - 1) * GAP_Y + 40;
+  // フレーム高さ
+  const frameH = BASE.btn.top + BASE.btn.height + (N - 1) * GAP_Y + 60;
+
+  // ✅ フレーム位置を測って「固定UIの基準(left/top)」を作る
+  useEffect(() => {
+    const measure = () => {
+      const frame = frameRef.current;
+      if (!frame) return;
+
+      const r = frame.getBoundingClientRect();
+
+      // fixed は viewport 基準なので、viewport 上での frame の左上をそのまま使う
+      // これに figma の X/Y を足すと、ズレずに重なる
+      setFixedBase({
+        left: r.left,
+        top: r.top,
+      });
+    };
+
+    // 初回（描画が落ち着いてから）
+    requestAnimationFrame(measure);
+
+    // リサイズで中心位置が変わるので追従
+    window.addEventListener("resize", measure);
+
+    return () => window.removeEventListener("resize", measure);
+  }, []);
 
   return (
     <main className="min-h-screen bg-white py-10">
-      {/* フレーム：390px */}
+      {/* ===== 固定UI（スクロールしない・フレーム基準で重ねる） ===== */}
       <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1000,
+          pointerEvents: "none",
+        }}
+      >
+        {/* toggle button (button.svg) */}
+        <button
+          type="button"
+          onClick={() => setShowSecondary4((v) => !v)}
+          aria-label="toggle secondary"
+          style={{
+            position: "fixed",
+            left: fixedBase.left + BASE.toggleBtn.left,
+            top: fixedBase.top + BASE.toggleBtn.top,
+            width: BASE.toggleBtn.width,
+            height: BASE.toggleBtn.height,
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            zIndex: 1100,
+            pointerEvents: "auto",
+          }}
+        >
+          <img
+            src="/SVG/button.svg"
+            alt="toggle"
+            draggable={false}
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "block",
+              transform: "rotate(90deg)",
+              transformOrigin: "center",
+            }}
+          />
+        </button>
+
+        {/* body-secondary4（buttonで表示/非表示） */}
+        {showSecondary4 && (
+          <img
+            src="/SVG/body-secondary4.svg"
+            alt="body-secondary4"
+            draggable={false}
+            style={{
+              position: "fixed",
+              left: fixedBase.left + BASE.bodySecondary4.left,
+              top: fixedBase.top + BASE.bodySecondary4.top,
+              width: BASE.bodySecondary4.width,
+              height: BASE.bodySecondary4.height,
+              display: "block",
+              zIndex: 1050,
+              pointerEvents: "none",
+            }}
+          />
+        )}
+      </div>
+
+      {/* ===== フレーム（スクロールする本体） ===== */}
+      <div
+        ref={frameRef}
         style={{
           position: "relative",
           width: BASE.frameW,
@@ -125,21 +227,25 @@ export default function Page() {
             width: BASE.title.width,
             height: BASE.title.height,
             display: "block",
+            zIndex: 50,
+            pointerEvents: "none",
           }}
           draggable={false}
         />
 
-        {/* body-primary svg */}
+        {/* body-primary2（←これはスクロール固定じゃない：流れる） */}
         <img
-          src="/SVG/body-primary.svg"
-          alt="body"
+          src="/SVG/body-primary2.svg"
+          alt="body-primary2"
           style={{
             position: "absolute",
-            left: BASE.body.left,
-            top: BASE.body.top,
-            width: BASE.body.width,
-            height: BASE.body.height,
+            left: BASE.bodyPrimary2.left,
+            top: BASE.bodyPrimary2.top,
+            width: BASE.bodyPrimary2.width,
+            height: BASE.bodyPrimary2.height,
             display: "block",
+            zIndex: 50,
+            pointerEvents: "none",
           }}
           draggable={false}
         />
@@ -147,6 +253,7 @@ export default function Page() {
         {/* 001〜095 */}
         {names.map((name, idx) => {
           const y = idx * GAP_Y;
+
           const imageUrl = urlMap[name];
           if (!imageUrl) return null;
 
@@ -183,70 +290,6 @@ export default function Page() {
             />
           );
         })}
-
-        {/* --- ここからが「スクロールしても固定」レイヤー --- */}
-        {/* ✅ fixed専用レイヤー（幅390で中央寄せ。ここ基準でX/Yが効く） */}
-        <div
-          style={{
-            position: "fixed",
-            left: "50%",
-            top: 0,
-            transform: "translateX(-50%)",
-            width: BASE.frameW,
-            height: "100vh",
-            zIndex: 9999,
-            pointerEvents: "none", // ここは基本クリック無効（ボタンだけ有効化する）
-          }}
-        >
-          {/* ✅ body-secondary3（最初は非表示、ボタンで表示） */}
-          {showBodySecondary3 && (
-            <img
-              src="/SVG/body-secondary3.svg"
-              alt="body-secondary3"
-              draggable={false}
-              style={{
-                position: "absolute",
-                left: 30,
-                top: 364,
-                width: 207,
-                height: 153,
-                display: "block",
-                pointerEvents: "none",
-              }}
-            />
-          )}
-
-          {/* ✅ button.svg：押せるようにここだけ pointerEvents を戻す */}
-          <button
-            type="button"
-            onClick={() => setShowBodySecondary3((v) => !v)}
-            style={{
-              position: "absolute",
-              left: 11,
-              top: 365,
-              width: 9,
-              height: 10,
-              padding: 0,
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              pointerEvents: "auto",
-            }}
-            aria-label="toggle body-secondary3"
-          >
-            <img
-              src="/SVG/button.svg"
-              alt="button"
-              draggable={false}
-              style={{
-                width: "100%",
-                height: "100%",
-                display: "block",
-              }}
-            />
-          </button>
-        </div>
-        {/* --- fixedレイヤーここまで --- */}
       </div>
     </main>
   );
