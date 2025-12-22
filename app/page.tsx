@@ -48,11 +48,8 @@ export default function Page() {
   // body-secondary4 の表示/非表示
   const [showSecondary4, setShowSecondary4] = useState(false);
 
-  // ✅ 固定UIを「フレーム左上基準」で置くためのオフセット
-  const [fixedBase, setFixedBase] = useState<{ left: number; top: number }>({
-    left: 0,
-    top: 0,
-  });
+  // ✅ 固定UIを「フレーム左基準」で置くための left オフセット
+  const [fixedBaseLeft, setFixedBaseLeft] = useState(0);
 
   // 表示する枚数（001〜095）
   const N = 95;
@@ -116,34 +113,23 @@ export default function Page() {
   // フレーム高さ
   const frameH = BASE.btn.top + BASE.btn.height + (N - 1) * GAP_Y + 60;
 
-  // ✅ フレーム位置を測って「固定UIの基準(left/top)」を作る
+  // ✅ フレーム位置を測って「fixed の left 基準」を作る（resize時だけでOK）
   useEffect(() => {
     const measure = () => {
       const frame = frameRef.current;
       if (!frame) return;
-
       const r = frame.getBoundingClientRect();
-
-      // fixed は viewport 基準なので、viewport 上での frame の左上をそのまま使う
-      // これに figma の X/Y を足すと、ズレずに重なる
-      setFixedBase({
-        left: r.left,
-        top: r.top,
-      });
+      setFixedBaseLeft(r.left);
     };
 
-    // 初回（描画が落ち着いてから）
     requestAnimationFrame(measure);
-
-    // リサイズで中心位置が変わるので追従
     window.addEventListener("resize", measure);
-
     return () => window.removeEventListener("resize", measure);
   }, []);
 
   return (
     <main className="min-h-screen bg-white py-10">
-      {/* ===== 固定UI（スクロールしない・フレーム基準で重ねる） ===== */}
+      {/* ===== 固定UI（スクロールしない・フレームのleftにだけ追従） ===== */}
       <div
         style={{
           position: "fixed",
@@ -152,15 +138,15 @@ export default function Page() {
           pointerEvents: "none",
         }}
       >
-        {/* toggle button (button.svg) */}
+        {/* toggle button (button.svg) - 固定 */}
         <button
           type="button"
           onClick={() => setShowSecondary4((v) => !v)}
           aria-label="toggle secondary"
           style={{
             position: "fixed",
-            left: fixedBase.left + BASE.toggleBtn.left,
-            top: fixedBase.top + BASE.toggleBtn.top,
+            left: fixedBaseLeft + BASE.toggleBtn.left,
+            top: BASE.toggleBtn.top,
             width: BASE.toggleBtn.width,
             height: BASE.toggleBtn.height,
             padding: 0,
@@ -168,7 +154,7 @@ export default function Page() {
             background: "transparent",
             cursor: "pointer",
             zIndex: 1100,
-            pointerEvents: "auto",
+            pointerEvents: "auto", // ✅ これが無いと押せない
           }}
         >
           <img
@@ -185,7 +171,7 @@ export default function Page() {
           />
         </button>
 
-        {/* body-secondary4（buttonで表示/非表示） */}
+        {/* body-secondary4 - 固定（buttonで表示/非表示） */}
         {showSecondary4 && (
           <img
             src="/SVG/body-secondary4.svg"
@@ -193,8 +179,8 @@ export default function Page() {
             draggable={false}
             style={{
               position: "fixed",
-              left: fixedBase.left + BASE.bodySecondary4.left,
-              top: fixedBase.top + BASE.bodySecondary4.top,
+              left: fixedBaseLeft + BASE.bodySecondary4.left,
+              top: BASE.bodySecondary4.top,
               width: BASE.bodySecondary4.width,
               height: BASE.bodySecondary4.height,
               display: "block",
@@ -233,7 +219,7 @@ export default function Page() {
           draggable={false}
         />
 
-        {/* body-primary2（←これはスクロール固定じゃない：流れる） */}
+        {/* body-primary2（スクロールで流れる） */}
         <img
           src="/SVG/body-primary2.svg"
           alt="body-primary2"
