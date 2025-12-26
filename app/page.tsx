@@ -36,6 +36,16 @@ const GAP_Y = 440 + 60; // 500
 const pad3 = (n: number) => String(n).padStart(3, "0");
 const getName = (i: number) => `${pad3(i)}.jpg`;
 
+/** ✅ 初回だけ使う Fisher–Yates shuffle（純粋関数） */
+function shuffle<T>(array: T[]): T[] {
+  const a = [...array];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export default function Page() {
   const frameRef = useRef<HTMLDivElement | null>(null);
 
@@ -44,7 +54,7 @@ export default function Page() {
   const [downloadedMap, setDownloadedMap] = useState<DlMap>({});
 
   const [showSecondary4, setShowSecondary4] = useState(false);
-  const [fixedBaseLeft, setFixedBaseLeft] = useState(0);
+  const [fixedBaseLeft, setFixedBaseLeft] = useState<number | null>(null);
 
   const N = 95;
 
@@ -52,6 +62,12 @@ export default function Page() {
     () => Array.from({ length: N }, (_, i) => getName(i + 1)),
     []
   );
+
+  /** ✅ 表示順だけを固定する（初回アクセスで1回シャッフル） */
+  const [shuffledNames, setShuffledNames] = useState<string[]>([]);
+  useEffect(() => {
+    setShuffledNames(shuffle(names));
+  }, [names]);
 
   const photoIds = useMemo(
     () => names.map((name) => `${FOLDER}/${name}`),
@@ -137,7 +153,6 @@ export default function Page() {
     // UI 即反映
     setDownloadedMap((prev) => ({ ...prev, [photo_id]: true }));
 
-    // デバッグ：クリックが発火してるか確認
     console.log("[DL] onDownloaded fired:", photo_id);
 
     const { error } = await supabase
@@ -184,50 +199,63 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-white py-10">
-      {/* ===== 固定UI（★クリック吸わないようにする） ===== */}
+      {/* ===== 固定UI（常に最前面に固定する） ===== */}
       <div
         style={{
           position: "fixed",
           inset: 0,
-          zIndex: 1000,
-          pointerEvents: "none", // ★これが超重要：下のクリックを通す
+          zIndex: 999999, // ← これで「消える」問題を潰す
+          pointerEvents: "none", // ← 下をクリックできる
         }}
       >
+        {/* toggle button */}
         <button
+          type="button"
+          aria-label="toggle secondary"
           onClick={() => setShowSecondary4((v) => !v)}
           style={{
             position: "fixed",
-            left: fixedBaseLeft + BASE.toggleBtn.left,
+            left: (fixedBaseLeft ?? 0) + BASE.toggleBtn.left,
             top: BASE.toggleBtn.top,
             width: BASE.toggleBtn.width,
             height: BASE.toggleBtn.height,
             background: "transparent",
             border: "none",
+            padding: 0,
             cursor: "pointer",
-            pointerEvents: "auto", // ★このボタンだけ押せるようにする
+            pointerEvents: "auto", // ← このボタンだけ押せる
+            zIndex: 1000000, // ← overlay内でも更に前
           }}
         >
           <img
             src="/SVG/button.svg"
-            style={{ width: "100%", transform: "rotate(90deg)" }}
-            alt=""
+            alt="toggle"
             draggable={false}
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "block",
+              transform: "rotate(90deg)",
+              pointerEvents: "none", // ← imgがクリック吸わない
+            }}
           />
         </button>
 
+        {/* body-secondary4 */}
         {showSecondary4 && (
           <img
             src="/SVG/body-secondary4.svg"
+            alt="body-secondary4"
+            draggable={false}
             style={{
               position: "fixed",
-              left: fixedBaseLeft + BASE.bodySecondary4.left,
+              left: (fixedBaseLeft ?? 0) + BASE.bodySecondary4.left,
               top: BASE.bodySecondary4.top,
               width: BASE.bodySecondary4.width,
               height: BASE.bodySecondary4.height,
-              pointerEvents: "none", // 表示だけなので none のままでOK
+              pointerEvents: "none",
+              zIndex: 999999,
             }}
-            alt=""
-            draggable={false}
           />
         )}
       </div>
@@ -255,7 +283,8 @@ export default function Page() {
           draggable={false}
         />
 
-        {names.map((name, idx) => {
+        {/* ✅ シャッフル順で描画 */}
+        {shuffledNames.map((name, idx) => {
           const y = idx * GAP_Y;
           const photo_id = `${FOLDER}/${name}`;
 
