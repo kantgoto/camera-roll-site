@@ -1,71 +1,74 @@
-import fs from "node:fs";
+// scripts/make-photo-dates.mjs
+import fs from "node:fs/promises";
 import path from "node:path";
 import exifr from "exifr";
 
-// ====== 設定ここだけ ======
-// HEICが入ってるフォルダ（元データ）
-const HEIC_DIR = "/Users/kantgoto/Desktop/カメラロール";
-// 001.jpg, 002.jpg ... が入ってるフォルダ（変換後）
-const JPG_DIR = "/Users/kantgoto/Desktop/camera-roll-jpg";
+const FOLDER = "2025";
+const PHOTOS_DIR = path.join(process.cwd(), "public", "photos", FOLDER);
+const OUT_PATH = path.join(process.cwd(), "public", "photo-dates.json");
 
-// 出力先（Nextのpublic配下に置く）
-const OUT_PATH = path.resolve("public/photo-dates.json");
-// =========================
-
-function listFiles(dir, exts) {
-  return fs
-    .readdirSync(dir)
-    .filter((f) => exts.includes(path.extname(f).toLowerCase()))
-    .sort((a, b) => a.localeCompare(b, "en"));
-}
-
-function fmt(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y},${m},${day}`; // Figmaと同じ表記
+// JSTで日付文字列にする（YYYY,MM,DD）
+function toLabelJST(date) {
+  if (!date) return "";
+  const d = new Date(date);
+  const fmt = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = fmt.formatToParts(d);
+  const yyyy = parts.find((p) => p.type === "year")?.value ?? "";
+  const mm = parts.find((p) => p.type === "month")?.value ?? "";
+  const dd = parts.find((p) => p.type === "day")?.value ?? "";
+  return `${yyyy},${mm},${dd}`;
 }
 
 async function main() {
-  const heics = listFiles(HEIC_DIR, [".heic", ".heif"]);
-  const jpgs = listFiles(JPG_DIR, [".jpg", ".jpeg"]);
+  const files = (await fs.readdir(PHOTOS_DIR))
+    .filter((f) => f.toLowerCase().endsWith(".jpg"))
+    .sort((a, b) => a.localeCompare(b, "en"));
 
-  if (heics.length === 0) {
-    console.error("HEICが見つからない:", HEIC_DIR);
-    process.exit(1);
+  const out = {}; // {"001.jpg": {takenAt, label}} 形式で出す（Page側がこの形式OK）
+
+  for (const name of files) {
+    const fp = path.join(PHOTOS_DIR, name);
+
+    // EXIFから撮影日時を取る（DateTimeOriginal / CreateDate など）
+    let takenAt = null;
+    try {
+      const exif = await exifr.parse(fp, {
+        tiff: true,
+        exif: true,
+        xmp: true,
+        icc: false,
+        gps: false,
+      });
+
+      takenAt =
+        exif?.DateTimeOriginal ??
+        exif?.CreateDate ??
+        exif?.ModifyDate ??
+        exif?.DateCreated ??
+        null;
+    } catch {
+      takenAt = null;
+    }
+
+    const label = toLabelJST(takenAt);
+
+    // ✅ キーは「001.jpg」形式（あなたのconsoleで keys[0] が 001.jpg だったのでこれに合わせる）
+    out[name] = {
+      takenAt: takenAt ? new Date(takenAt).toISOString() : undefined,
+      label: label || undefined,
+    };
   }
-  if (jpgs.length === 0) {
-    console.error("JPGが見つからない:", JPG_DIR);
-    process.exit(1);
-  }
 
-  // 重要：並び順で対応づける（001.jpgが1番目のHEIC、という前提）
-  const n = Math.min(heics.length, jpgs.length);
-
-  const map = {};
-  for (let i = 0; i < n; i++) {
-    const heicPath = path.join(HEIC_DIR, heics[i]);
-    const jpgName = jpgs[i]; // 001.jpg みたいなやつ
-
-    let d =
-      (await exifr.parse(heicPath, ["DateTimeOriginal", "CreateDate"]))?.DateTimeOriginal ||
-      (await exifr.parse(heicPath, ["DateTimeOriginal", "CreateDate"]))?.CreateDate ||
-      null;
-
-    // exifrがDateを返すことが多いけど、念のため
-    if (d && !(d instanceof Date)) d = new Date(d);
-
-    map[jpgName] = d ? fmt(d) : null;
-    process.stdout.write(`mapped: ${heics[i]} -> ${jpgName} -> ${map[jpgName]}\n`);
-  }
-
-  fs.writeFileSync(OUT_PATH, JSON.stringify(map, null, 2), "utf-8");
-  console.log("\n✅ wrote:", OUT_PATH);
-  console.log("例:", Object.entries(map).slice(0, 5));
+  await fs.writeFile(OUT_PATH, JSON.stringify(out, null, 2), "utf-8");
+  console.log(`✅ wrote ${OUT_PATH} (${files.length} files)`);
 }
 
 main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
