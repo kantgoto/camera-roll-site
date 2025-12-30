@@ -125,19 +125,12 @@ export default function Page() {
 
         setDateLabelMap((prev) => {
           const next = { ...prev };
-
           for (const [path, label] of Object.entries(json)) {
-            const id = `videos/${path}`; // ✅ ここ重要（items の id と一致させる）
-            if (!next[id] && label) {
-              next[id] = label;
-            }
+            const id = `videos/${path}`; // items の id と一致
+            if (!next[id] && label) next[id] = label;
           }
-
           return next;
         });
-
-        // デバッグしたければ
-        // console.log("[video-dates] loaded keys:", Object.keys(json).length);
       } catch (e) {
         console.warn("[video-dates] error", e);
       }
@@ -148,7 +141,7 @@ export default function Page() {
 
   /* ----------------------------------------------------
    * 1) ✅ Storageをlistして、写真+動画を統合してシャッフル
-   *    ★ videos が 0 にならないよう recursive:true が重要
+   *    ※ Vercelの型エラー回避のため options に recursive を入れない
    * ---------------------------------------------------- */
   useEffect(() => {
     const listAll = async (bucket: "photos" | "videos", folder: string) => {
@@ -161,9 +154,9 @@ export default function Page() {
           limit,
           offset,
           sortBy: { column: "name", order: "asc" },
-          recursive: true, // ✅ keep
         });
 
+        // デバッグ（必要なら）
         console.log("[LIST]", {
           bucket,
           folder,
@@ -182,7 +175,11 @@ export default function Page() {
         for (const x of data ?? []) {
           if (!x?.name) continue;
           if (x.name.startsWith(".")) continue; // .DS_Store
-          collected.push({ name: x.name, createdAt: (x as any).created_at });
+          collected.push({
+            name: x.name,
+            // 型が揺れるので any 経由
+            createdAt: (x as any).created_at ?? (x as any).createdAt,
+          });
         }
 
         if (!data || data.length < limit) break;
@@ -200,7 +197,6 @@ export default function Page() {
         listAll(VIDEO_BUCKET, FOLDER),
       ]);
 
-      // ここ、デバッグ用（必要なら残してOK）
       console.log("photos:", photos?.length ?? 0, "videos:", videos?.length ?? 0);
 
       const photoItems: MediaItem[] = (photos ?? [])
@@ -236,12 +232,12 @@ export default function Page() {
       const mixed = shuffle([...photoItems, ...videoItems]);
       setItems(mixed);
 
-      // 動画だけ：createdAt が取れてるなら先に入れる（速い）
+      // 動画だけ：createdAt が取れてるなら先に入れる（ただしJSONが優先で上書きしない）
       setDateLabelMap((prev) => {
         const next = { ...prev };
         for (const it of mixed) {
           if (it.kind !== "video") continue;
-          if (next[it.id]) continue;
+          if (next[it.id]) continue; // すでに video-dates.json が入ってるなら上書きしない
           if (it.createdAt) {
             const d = new Date(it.createdAt);
             if (!Number.isNaN(d.getTime())) next[it.id] = toLabel(d);
@@ -278,9 +274,7 @@ export default function Page() {
    * ---------------------------------------------------- */
   useEffect(() => {
     const run = async () => {
-      const { data, error } = await supabase
-        .from("downloads")
-        .select("photo_id, downloaded");
+      const { data, error } = await supabase.from("downloads").select("photo_id, downloaded");
 
       if (error) {
         console.error("[downloads select error]", error);
@@ -300,6 +294,7 @@ export default function Page() {
   /* ----------------------------------------------------
    * 4) ✅ 写真: EXIF 日付を読む（download → exifr）+ cache
    *    動画: publicUrl HEAD Last-Modified fallback + cache
+   *    ※ ただし video-dates.json で入ってるなら何もしない
    * ---------------------------------------------------- */
   const readPhotoDateLabel = async (bucket: string, path: string) => {
     try {
@@ -344,7 +339,7 @@ export default function Page() {
 
         if (seenDateRef.current[id]) continue;
 
-        // state にあるならOK
+        // state にあるならOK（video-dates.json も含む）
         if (dateLabelMap[id]) {
           seenDateRef.current[id] = true;
           continue;
@@ -374,7 +369,7 @@ export default function Page() {
           continue;
         }
 
-        // 動画: createdAt が無い/入ってない場合に HEAD fallback
+        // 動画（最終手段）
         const url = urlMap[id];
         if (url) {
           const label = await tryGetLastModifiedLabel(url);
@@ -397,7 +392,7 @@ export default function Page() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaIds, urlMap]);
+  }, [mediaIds, urlMap, dateLabelMap]);
 
   /* ----------------------------------------------------
    * 5) ✅ DL完了 → downloads に upsert（共通）
