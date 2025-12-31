@@ -26,8 +26,8 @@ const VIDEO_BUCKET = "videos" as const;
 const FOLDER = "2025";
 const GREEN = "#78FF6E";
 
-// ✅ 先読み：見てる場所の「5つ下」まで先回り
-const PREFETCH_AHEAD = 5;
+// ✅ 先読み：見てる場所の「10つ下」まで先回り
+const PREFETCH_AHEAD = 10;
 
 // figma 基準
 const BASE = {

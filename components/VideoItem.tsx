@@ -76,7 +76,7 @@ export default function VideoItem({
         root: null,
         threshold: 0.01,
         // “見える少し前”で反応
-        rootMargin: "300px 0px 300px 0px",
+        rootMargin: "1200px 0px 1200px 0px",
       }
     );
 

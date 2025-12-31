@@ -63,7 +63,7 @@ export default function PhotoItem({
       {
         root: null,
         threshold: 0.01,
-        rootMargin: "300px 0px 300px 0px",
+        rootMargin: "1200px 0px 1200px 0px",
       }
     );
 
