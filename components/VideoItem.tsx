@@ -7,6 +7,12 @@ import { supabase } from "@/lib/supabaseClient";
 type Rect = { left: number; top: number; width: number; height: number };
 
 type Props = {
+  index: number;
+  onVisible: (index: number) => void;
+
+  // ✅ 先読みウィンドウに入ったら metadata を取りに行く
+  shouldPreload: boolean;
+
   name: string;
   videoUrl: string;
   dateText: string;
@@ -22,12 +28,14 @@ type Props = {
 
   green: string;
 
-  // Supabase Storage から blob DLするために必要
   bucket: string; // "videos"
   path: string;   // "2025/v001.mp4"
 };
 
 export default function VideoItem({
+  index,
+  onVisible,
+  shouldPreload,
   name,
   videoUrl,
   dateText,
@@ -45,6 +53,7 @@ export default function VideoItem({
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
   const [inView, setInView] = useState(false);
 
   const isMobile = useMemo(() => {
@@ -53,12 +62,33 @@ export default function VideoItem({
     return /iPhone|iPad|iPod|Android/i.test(ua);
   }, []);
 
-  // ===== 画面内判定（IntersectionObserver）=====
+  // ===== 見えてきたら activeIndex を進める（軽めに rootMargin 付ける）=====
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
 
-    // downloaded なら再生対象外
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e?.isIntersecting) onVisible(index);
+      },
+      {
+        root: null,
+        threshold: 0.01,
+        // “見える少し前”で反応
+        rootMargin: "300px 0px 300px 0px",
+      }
+    );
+
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [index, onVisible]);
+
+  // ===== 画面内判定（再生用）=====
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+
     if (downloaded) {
       setInView(false);
       return;
@@ -67,13 +97,11 @@ export default function VideoItem({
     const obs = new IntersectionObserver(
       (entries) => {
         const e = entries[0];
-        // ちょい余裕を持って「入った」扱い（0.25くらいが安定）
         setInView(!!e?.isIntersecting && (e.intersectionRatio ?? 0) >= 0.25);
       },
       {
         root: null,
         threshold: [0, 0.25, 0.5, 1],
-        // 先読み気味にしたいならここを少し広げる
         rootMargin: "200px 0px 200px 0px",
       }
     );
@@ -82,16 +110,42 @@ export default function VideoItem({
     return () => obs.disconnect();
   }, [downloaded]);
 
+  // ===== 先読み（metadataだけ）=====
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (!videoUrl || downloaded) return;
+
+    // 画面内は play制御があるのでここでは触らない
+    if (inView) return;
+
+    if (shouldPreload) {
+      try {
+        if (!v.src) v.src = videoUrl;
+        // metadata だけ先に読む（重すぎない）
+        v.preload = "metadata";
+        v.load();
+      } catch {}
+    } else {
+      // 先読み範囲から外れたら解放
+      try {
+        v.pause();
+        v.removeAttribute("src");
+        v.load();
+      } catch {}
+    }
+  }, [shouldPreload, videoUrl, downloaded, inView]);
+
   // ===== inView に応じて play/pause =====
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    // URLない / downloaded は安全側で止める
     if (!videoUrl || downloaded) {
       try {
         v.pause();
-        v.removeAttribute("src"); // 解放（Safari向け）
+        v.removeAttribute("src");
         v.load();
       } catch {}
       return;
@@ -99,28 +153,32 @@ export default function VideoItem({
 
     const run = async () => {
       if (inView) {
-        // iOS で play() が弾かれることがあるので握りつぶす
         try {
-          // srcが空ならセット（再入場で確実に復帰させる）
           if (!v.src) v.src = videoUrl;
+          v.preload = "auto";
           await v.play();
         } catch {
-          // 失敗してもOK（ユーザー操作無しの自動再生制限など）
+          // 自動再生制限などは握りつぶす
         }
       } else {
         try {
           v.pause();
-          // 軽量化：画面外は先頭に戻す（不要なら消してOK）
           v.currentTime = 0;
-          // さらに軽く：ソースを外してデコード/バッファを解放
-          v.removeAttribute("src");
-          v.load();
+
+          // 先読み範囲に入ってるなら src は残して metadata だけ維持
+          if (shouldPreload) {
+            v.preload = "metadata";
+            v.load();
+          } else {
+            v.removeAttribute("src");
+            v.load();
+          }
         } catch {}
       }
     };
 
     run();
-  }, [inView, videoUrl, downloaded]);
+  }, [inView, videoUrl, downloaded, shouldPreload]);
 
   // ===== DL処理 =====
   const fetchBlobFromSupabase = async (): Promise<Blob> => {
@@ -160,7 +218,6 @@ export default function VideoItem({
       return;
     }
 
-    // share無理なら新規タブ
     window.open(videoUrl, "_blank");
   };
 
@@ -213,7 +270,7 @@ export default function VideoItem({
           }}
         />
 
-        {/* 動画（downloaded=false のときだけ） */}
+        {/* 動画 */}
         {canShowVideo ? (
           <div
             style={{
@@ -225,11 +282,10 @@ export default function VideoItem({
           >
             <video
               ref={videoRef}
-              // src は inView でセット/解除する（初速軽く＆解放）
               muted
               playsInline
               loop
-              // autoPlay は付けてもいいけど、ここでは play() 制御するので不要
+              // srcは effect で付け外し
               preload="none"
               style={{
                 width: "100%",
@@ -242,7 +298,7 @@ export default function VideoItem({
         ) : null}
       </div>
 
-      {/* 日付（常に表示） */}
+      {/* 日付 */}
       <div
         style={{
           position: "absolute",

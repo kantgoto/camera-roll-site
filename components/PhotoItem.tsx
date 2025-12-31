@@ -2,12 +2,15 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
 type Rect = { left: number; top: number; width: number; height: number };
 
 type Props = {
+  index: number;
+  onVisible: (index: number) => void;
+
   name: string;
   imageUrl: string;
   dateText: string;
@@ -30,6 +33,8 @@ const BUCKET = "photos";
 const FOLDER = "2025";
 
 export default function PhotoItem({
+  index,
+  onVisible,
   name,
   imageUrl,
   dateText,
@@ -43,6 +48,28 @@ export default function PhotoItem({
   singlePhotoPagePath = (n) => `/photo?name=${encodeURIComponent(n)}`,
 }: Props) {
   const [downloading, setDownloading] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // ✅ 見えたら activeIndex を進める（動画と同じ）
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        if (e?.isIntersecting) onVisible(index);
+      },
+      {
+        root: null,
+        threshold: 0.01,
+        rootMargin: "300px 0px 300px 0px",
+      }
+    );
+
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [index, onVisible]);
 
   const isMobile = () => {
     if (typeof navigator === "undefined") return false;
@@ -101,7 +128,7 @@ export default function PhotoItem({
   };
 
   const handleDownload = async () => {
-    if (downloaded) return;     // ★ここで止める
+    if (downloaded) return;
     if (downloading) return;
 
     setDownloading(true);
@@ -128,6 +155,7 @@ export default function PhotoItem({
     <>
       {/* 写真枠 */}
       <div
+        ref={wrapperRef}
         style={{
           position: "absolute",
           left: photoRect.left,
@@ -164,13 +192,14 @@ export default function PhotoItem({
               fill
               sizes="330px"
               className="object-cover"
-              loading="eager"
+              // ✅ “eager”は全件だと重いので外す（先読みは page.tsx 側でやる）
+              loading="lazy"
             />
           </div>
         ) : null}
       </div>
 
-      {/* 日付（常に表示） */}
+      {/* 日付 */}
       <div
         style={{
           position: "absolute",
@@ -199,10 +228,9 @@ export default function PhotoItem({
         </div>
       </div>
 
-      {/* ボタン（表示は残す。downloadedでも見せる） */}
+      {/* ボタン */}
       <button
         onClick={handleDownload}
-        // disabled を外す（見た目は同じでクリックだけ無視する）
         style={{
           position: "absolute",
           left: buttonRect.left,

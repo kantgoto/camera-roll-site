@@ -26,6 +26,9 @@ const VIDEO_BUCKET = "videos" as const;
 const FOLDER = "2025";
 const GREEN = "#78FF6E";
 
+// ✅ 先読み：見てる場所の「5つ下」まで先回り
+const PREFETCH_AHEAD = 5;
+
 // figma 基準
 const BASE = {
   frameW: 390,
@@ -106,6 +109,12 @@ export default function Page() {
   // 日付読み取りの重複防止
   const seenDateRef = useRef<Record<string, true>>({});
 
+  // ✅ いま見ている「基準」index（IntersectionObserver から更新）
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  // ✅ 画像の先読み（同じURLは何度も作らない）
+  const preloadedImgRef = useRef<Record<string, true>>({});
+
   /* ----------------------------------------------------
    * 追加) 動画の撮影日JSON（public/video-dates.json）を読む
    * - JSON key: "2025/v001.mp4"
@@ -140,8 +149,8 @@ export default function Page() {
   }, []);
 
   /* ----------------------------------------------------
-   * 1) ✅ Storageをlistして、写真+動画を統合してシャッフル
-   *    ※ Vercelの型エラー回避のため options に recursive を入れない
+   * 1) Storageをlistして、写真+動画を統合してシャッフル
+   * ※ Vercelの型エラー回避のため options に recursive を入れない
    * ---------------------------------------------------- */
   useEffect(() => {
     const listAll = async (bucket: "photos" | "videos", folder: string) => {
@@ -156,7 +165,6 @@ export default function Page() {
           sortBy: { column: "name", order: "asc" },
         });
 
-        // デバッグ（必要なら）
         console.log("[LIST]", {
           bucket,
           folder,
@@ -177,7 +185,6 @@ export default function Page() {
           if (x.name.startsWith(".")) continue; // .DS_Store
           collected.push({
             name: x.name,
-            // 型が揺れるので any 経由
             createdAt: (x as any).created_at ?? (x as any).createdAt,
           });
         }
@@ -237,7 +244,7 @@ export default function Page() {
         const next = { ...prev };
         for (const it of mixed) {
           if (it.kind !== "video") continue;
-          if (next[it.id]) continue; // すでに video-dates.json が入ってるなら上書きしない
+          if (next[it.id]) continue; // video-dates.json が入ってるなら上書きしない
           if (it.createdAt) {
             const d = new Date(it.createdAt);
             if (!Number.isNaN(d.getTime())) next[it.id] = toLabel(d);
@@ -255,7 +262,7 @@ export default function Page() {
   const mediaIds = useMemo(() => items.map((it) => it.id), [items]);
 
   /* ----------------------------------------------------
-   * 2) ✅ public URL を作る（key=media_id）
+   * 2) public URL を作る（key=media_id）
    * ---------------------------------------------------- */
   useEffect(() => {
     if (!items.length) return;
@@ -269,8 +276,38 @@ export default function Page() {
   }, [items]);
 
   /* ----------------------------------------------------
-   * 3) ✅ downloads を読む（写真も動画も同じテーブル）
-   *    photo_id に media_id を入れる運用
+   * ✅ 2.5) 先読み：activeIndex の「5つ下」まで
+   * - 写真: new Image().src でプリロード
+   * - 動画: VideoItem に shouldPreload を渡して metadata だけ先に読む
+   * ---------------------------------------------------- */
+  useEffect(() => {
+    if (!items.length) return;
+    if (!Object.keys(urlMap).length) return;
+    if (typeof window === "undefined") return;
+
+    const start = Math.max(0, activeIndex + 1);
+    const end = Math.min(items.length - 1, activeIndex + PREFETCH_AHEAD);
+
+    for (let i = start; i <= end; i++) {
+      const it = items[i];
+      const url = urlMap[it.id];
+      if (!url) continue;
+
+      if (it.kind === "photo") {
+        // 同じURLは二度やらない
+        if (preloadedImgRef.current[url]) continue;
+        preloadedImgRef.current[url] = true;
+
+        const img = new window.Image();
+        img.decoding = "async";
+        img.src = url;
+      }
+      // video は VideoItem 側で shouldPreload を見て metadata を取りに行く
+    }
+  }, [activeIndex, items, urlMap]);
+
+  /* ----------------------------------------------------
+   * 3) downloads を読む（写真も動画も同じテーブル）
    * ---------------------------------------------------- */
   useEffect(() => {
     const run = async () => {
@@ -292,9 +329,9 @@ export default function Page() {
   }, []);
 
   /* ----------------------------------------------------
-   * 4) ✅ 写真: EXIF 日付を読む（download → exifr）+ cache
-   *    動画: publicUrl HEAD Last-Modified fallback + cache
-   *    ※ ただし video-dates.json で入ってるなら何もしない
+   * 4) 写真: EXIF 日付を読む（download → exifr）+ cache
+   * 動画: 最終手段で HEAD Last-Modified fallback + cache
+   * ※ video-dates.json が入ってるなら何もしない
    * ---------------------------------------------------- */
   const readPhotoDateLabel = async (bucket: string, path: string) => {
     try {
@@ -395,7 +432,7 @@ export default function Page() {
   }, [mediaIds, urlMap, dateLabelMap]);
 
   /* ----------------------------------------------------
-   * 5) ✅ DL完了 → downloads に upsert（共通）
+   * 5) DL完了 → downloads に upsert（共通）
    * ---------------------------------------------------- */
   const handleDownloaded = async (media_id: string) => {
     setDownloadedMap((prev) => ({ ...prev, [media_id]: true }));
@@ -404,7 +441,7 @@ export default function Page() {
       .from("downloads")
       .upsert(
         {
-          photo_id: media_id, // ✅ photos/... も videos/... も入れる
+          photo_id: media_id, // photos/... も videos/... も入れる
           downloaded: true,
           downloaded_at: new Date().toISOString(),
         },
@@ -440,6 +477,11 @@ export default function Page() {
       window.removeEventListener("scroll", measure);
     };
   }, []);
+
+  // ✅ activeIndex を更新する（見えたら「いま見てる」扱い）
+  const handleVisibleIndex = (idx: number) => {
+    setActiveIndex((prev) => (idx > prev ? idx : prev)); // 戻らない方式で安定させる
+  };
 
   return (
     <main className="min-h-screen bg-white py-10">
@@ -543,10 +585,14 @@ export default function Page() {
         {items.map((it, idx) => {
           const y = idx * GAP_Y;
 
+          const shouldPreload = idx > activeIndex && idx <= activeIndex + PREFETCH_AHEAD;
+
           if (it.kind === "photo") {
             return (
               <PhotoItem
                 key={it.id}
+                index={idx}
+                onVisible={handleVisibleIndex}
                 name={it.name}
                 imageUrl={urlMap[it.id] ?? ""}
                 dateText={dateLabelMap[it.id] ?? ""}
@@ -564,6 +610,9 @@ export default function Page() {
           return (
             <VideoItem
               key={it.id}
+              index={idx}
+              onVisible={handleVisibleIndex}
+              shouldPreload={shouldPreload}
               name={it.name}
               videoUrl={urlMap[it.id] ?? ""}
               dateText={dateLabelMap[it.id] ?? ""}
