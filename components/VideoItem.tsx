@@ -73,7 +73,7 @@ export default function VideoItem({
     }
 
     // ① 先読みを増やす：500px/item × 5個 = 約2500px → 安全に3000px
-    const PRELOAD_MARGIN = "3000px 0px 3000px 0px";
+    const PRELOAD_MARGIN = "25000px 0px 25000px 0px";
 
     // ② 再生判定はちょい厳しめ（これでチラつき防止）
     const PLAY_MARGIN = "800px 0px 800px 0px";
