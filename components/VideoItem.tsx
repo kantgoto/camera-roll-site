@@ -74,7 +74,7 @@ export default function VideoItem({
 
     // ✅ 10個先読み（GAP_Y=500想定 → 5000px）+ ちょい余裕
     // iOSは先読みが弱いのでさらに広めでもOK
-    const PRELOAD_MARGIN = isMobile ? "6000px 0px 6000px 0px" : "3000px 0px 3000px 0px";
+    const PRELOAD_MARGIN = isMobile ? "12000px 0px 12000px 0px" : "3000px 0px 3000px 0px";
 
     // 再生判定：あまり遠くで再生しない（音無しでもデコード重い）
     const PLAY_MARGIN = isMobile ? "1200px 0px 1200px 0px" : "800px 0px 800px 0px";
