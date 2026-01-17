@@ -610,24 +610,21 @@ setItems(mixed.slice(0, LIMIT));
           }
 
           return (
-            <VideoItem
-              key={it.id}
-              index={idx}
-              onVisible={handleVisibleIndex}
-              shouldPreload={shouldPreload}
-              name={it.name}
-              videoUrl={urlMap[it.id] ?? ""}
-              dateText={dateLabelMap[it.id] ?? ""}
-              videoRect={{ ...BASE.photo, top: BASE.photo.top + y }} // 写真と同じ配置
-              dateRect={{ ...BASE.date, top: BASE.date.top + y }}
-              buttonSvg="/SVG/button-download.svg"
-              buttonRect={{ ...BASE.btn, top: BASE.btn.top + y }}
-              downloaded={!!downloadedMap[it.id]}
-              onDownloaded={() => handleDownloaded(it.id)}
-              green={GREEN}
-              bucket={it.bucket}
-              path={it.path}
-            />
+<VideoItem
+  key={it.id}
+  name={it.name}
+  videoUrl={urlMap[it.id] ?? ""}
+  dateText={dateLabelMap[it.id] ?? ""}
+  videoRect={{ ...BASE.photo, top: BASE.photo.top + y }}
+  dateRect={{ ...BASE.date, top: BASE.date.top + y }}
+  buttonSvg="/SVG/button-download.svg"
+  buttonRect={{ ...BASE.btn, top: BASE.btn.top + y }}
+  downloaded={!!downloadedMap[it.id]}
+  onDownloaded={() => handleDownloaded(it.id)}
+  green={GREEN}
+  bucket={it.bucket}
+  path={it.path}
+/>
           );
         })}
       </div>
