@@ -238,7 +238,7 @@ export default function Page() {
 
 const mixed = shuffle([...photoItems, ...videoItems]);
 
-const LIMIT = 70; // ←表示したい数（100でOK）
+const LIMIT = 50; // ←表示したい数（100でOK）
 setItems(mixed.slice(0, LIMIT));
 
       // 動画だけ：createdAt が取れてるなら先に入れる（ただしJSONが優先で上書きしない）
