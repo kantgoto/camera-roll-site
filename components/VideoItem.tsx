@@ -48,7 +48,7 @@ export default function VideoItem({
   // “再生するか” の判定（画面内に入った）
   const [inView, setInView] = useState(false);
 
-  // “srcを解放してよいか” の判定（かなり遠い）
+  // “srcをセットしてよいか” の判定（先読みゾーン）
   const [near, setNear] = useState(false);
 
   const isMobile = useMemo(() => {
@@ -72,11 +72,12 @@ export default function VideoItem({
       return;
     }
 
-    // ① 先読みを増やす：500px/item × 5個 = 約2500px → 安全に3000px
-    const PRELOAD_MARGIN = "25000px 0px 25000px 0px";
+    // ✅ 10個先読み（GAP_Y=500想定 → 5000px）+ ちょい余裕
+    // iOSは先読みが弱いのでさらに広めでもOK
+    const PRELOAD_MARGIN = isMobile ? "6000px 0px 6000px 0px" : "3000px 0px 3000px 0px";
 
-    // ② 再生判定はちょい厳しめ（これでチラつき防止）
-    const PLAY_MARGIN = "800px 0px 800px 0px";
+    // 再生判定：あまり遠くで再生しない（音無しでもデコード重い）
+    const PLAY_MARGIN = isMobile ? "1200px 0px 1200px 0px" : "800px 0px 800px 0px";
 
     const nearObs = new IntersectionObserver(
       (entries) => {
@@ -101,18 +102,18 @@ export default function VideoItem({
       nearObs.disconnect();
       playObs.disconnect();
     };
-  }, [downloaded]);
+  }, [downloaded, isMobile]);
 
   /* ----------------------------------------------------
-   * ② srcの管理：
-   * - near の間は src を保持（先読み）
-   * - near から外れたら src を外して解放
+   * src の管理：
+   * - near の間は src をセット（先読み）
+   * - PCだけ：near から外れたら src を外して解放
+   * - スマホ：src を外さない（付け直しが間に合わない原因になりやすい）
    * ---------------------------------------------------- */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    // URL無い / downloaded は安全側で解放
     if (!videoUrl || downloaded) {
       try {
         v.pause();
@@ -123,40 +124,46 @@ export default function VideoItem({
     }
 
     if (near) {
-      // 先読みゾーンに入ったら src をセット（すでにあれば何もしない）
       try {
+        // srcが無ければセット
         if (!v.getAttribute("src")) {
           v.setAttribute("src", videoUrl);
-          // preloadは metadata にして “最初の一瞬” を早くする
-          v.preload = "metadata";
+          // ✅ iOSは metadata だと全然先読みしないことがある
+          v.preload = isMobile ? "auto" : "metadata";
           v.load();
         }
       } catch {}
     } else {
-      // かなり遠くまで離れたら解放（毎回ガチャガチャしないよう near で制御）
-      try {
-        v.pause();
-        v.currentTime = 0;
-        v.removeAttribute("src");
-        v.load();
-      } catch {}
+      // ✅ PCだけ解放する（スマホは保持）
+      if (!isMobile) {
+        try {
+          v.pause();
+          v.currentTime = 0;
+          v.removeAttribute("src");
+          v.load();
+        } catch {}
+      } else {
+        // スマホ：軽く止めるだけ（src保持）
+        try {
+          v.pause();
+        } catch {}
+      }
     }
-  }, [near, videoUrl, downloaded]);
+  }, [near, videoUrl, downloaded, isMobile]);
 
   /* ----------------------------------------------------
    * inView に応じて play/pause
-   * （src は near で管理してるので、ここでは触らない）
+   * （src は near で管理）
    * ---------------------------------------------------- */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-
     if (!videoUrl || downloaded) return;
 
     const run = async () => {
       if (inView) {
         try {
-          // iOSは play() が弾かれることがあるのでcatch
+          // iOSはplayが弾かれることがあるのでcatch
           await v.play();
         } catch {}
       } else {
@@ -261,7 +268,6 @@ export default function VideoItem({
           }}
         />
 
-        {/* 動画 */}
         {canShowVideo ? (
           <div
             style={{
@@ -276,8 +282,8 @@ export default function VideoItem({
               muted
               playsInline
               loop
-              // preloadは near で上書きするけど保険で
-              preload="metadata"
+              // ✅ iOS優先で auto（ただしiOSが無視することもある）
+              preload={isMobile ? "auto" : "metadata"}
               style={{
                 width: "100%",
                 height: "100%",
