@@ -7,12 +7,6 @@ import { supabase } from "@/lib/supabaseClient";
 type Rect = { left: number; top: number; width: number; height: number };
 
 type Props = {
-  index: number;
-  onVisible: (index: number) => void;
-
-  // ✅ 先読みウィンドウに入ったら metadata を取りに行く
-  shouldPreload: boolean;
-
   name: string;
   videoUrl: string;
   dateText: string;
@@ -33,9 +27,6 @@ type Props = {
 };
 
 export default function VideoItem({
-  index,
-  onVisible,
-  shouldPreload,
   name,
   videoUrl,
   dateText,
@@ -54,7 +45,11 @@ export default function VideoItem({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  // “再生するか” の判定（画面内に入った）
   const [inView, setInView] = useState(false);
+
+  // “srcを解放してよいか” の判定（かなり遠い）
+  const [near, setNear] = useState(false);
 
   const isMobile = useMemo(() => {
     if (typeof navigator === "undefined") return false;
@@ -62,86 +57,62 @@ export default function VideoItem({
     return /iPhone|iPad|iPod|Android/i.test(ua);
   }, []);
 
-  // ===== 見えてきたら activeIndex を進める（軽めに rootMargin 付ける）=====
-  useEffect(() => {
-    const el = wrapperRef.current;
-    if (!el) return;
-
-    const obs = new IntersectionObserver(
-      (entries) => {
-        const e = entries[0];
-        if (e?.isIntersecting) onVisible(index);
-      },
-      {
-        root: null,
-        threshold: 0.01,
-        // “見える少し前”で反応
-        rootMargin: "1200px 0px 1200px 0px",
-      }
-    );
-
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [index, onVisible]);
-
-  // ===== 画面内判定（再生用）=====
+  /* ----------------------------------------------------
+   * ①② IntersectionObserver を2段にする
+   * - near: 先読みゾーン（srcをセットしておく）
+   * - inView: 再生ゾーン（play/pause）
+   * ---------------------------------------------------- */
   useEffect(() => {
     const el = wrapperRef.current;
     if (!el) return;
 
     if (downloaded) {
       setInView(false);
+      setNear(false);
       return;
     }
 
-    const obs = new IntersectionObserver(
+    // ① 先読みを増やす：500px/item × 5個 = 約2500px → 安全に3000px
+    const PRELOAD_MARGIN = "3000px 0px 3000px 0px";
+
+    // ② 再生判定はちょい厳しめ（これでチラつき防止）
+    const PLAY_MARGIN = "800px 0px 800px 0px";
+
+    const nearObs = new IntersectionObserver(
+      (entries) => {
+        const e = entries[0];
+        setNear(!!e?.isIntersecting);
+      },
+      { root: null, threshold: 0, rootMargin: PRELOAD_MARGIN }
+    );
+
+    const playObs = new IntersectionObserver(
       (entries) => {
         const e = entries[0];
         setInView(!!e?.isIntersecting && (e.intersectionRatio ?? 0) >= 0.25);
       },
-      {
-        root: null,
-        threshold: [0, 0.25, 0.5, 1],
-        rootMargin: "200px 0px 200px 0px",
-      }
+      { root: null, threshold: [0, 0.25, 0.5, 1], rootMargin: PLAY_MARGIN }
     );
 
-    obs.observe(el);
-    return () => obs.disconnect();
+    nearObs.observe(el);
+    playObs.observe(el);
+
+    return () => {
+      nearObs.disconnect();
+      playObs.disconnect();
+    };
   }, [downloaded]);
 
-  // ===== 先読み（metadataだけ）=====
+  /* ----------------------------------------------------
+   * ② srcの管理：
+   * - near の間は src を保持（先読み）
+   * - near から外れたら src を外して解放
+   * ---------------------------------------------------- */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
 
-    if (!videoUrl || downloaded) return;
-
-    // 画面内は play制御があるのでここでは触らない
-    if (inView) return;
-
-    if (shouldPreload) {
-      try {
-        if (!v.src) v.src = videoUrl;
-        // metadata だけ先に読む（重すぎない）
-        v.preload = "metadata";
-        v.load();
-      } catch {}
-    } else {
-      // 先読み範囲から外れたら解放
-      try {
-        v.pause();
-        v.removeAttribute("src");
-        v.load();
-      } catch {}
-    }
-  }, [shouldPreload, videoUrl, downloaded, inView]);
-
-  // ===== inView に応じて play/pause =====
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-
+    // URL無い / downloaded は安全側で解放
     if (!videoUrl || downloaded) {
       try {
         v.pause();
@@ -151,36 +122,56 @@ export default function VideoItem({
       return;
     }
 
+    if (near) {
+      // 先読みゾーンに入ったら src をセット（すでにあれば何もしない）
+      try {
+        if (!v.getAttribute("src")) {
+          v.setAttribute("src", videoUrl);
+          // preloadは metadata にして “最初の一瞬” を早くする
+          v.preload = "metadata";
+          v.load();
+        }
+      } catch {}
+    } else {
+      // かなり遠くまで離れたら解放（毎回ガチャガチャしないよう near で制御）
+      try {
+        v.pause();
+        v.currentTime = 0;
+        v.removeAttribute("src");
+        v.load();
+      } catch {}
+    }
+  }, [near, videoUrl, downloaded]);
+
+  /* ----------------------------------------------------
+   * inView に応じて play/pause
+   * （src は near で管理してるので、ここでは触らない）
+   * ---------------------------------------------------- */
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (!videoUrl || downloaded) return;
+
     const run = async () => {
       if (inView) {
         try {
-          if (!v.src) v.src = videoUrl;
-          v.preload = "auto";
+          // iOSは play() が弾かれることがあるのでcatch
           await v.play();
-        } catch {
-          // 自動再生制限などは握りつぶす
-        }
+        } catch {}
       } else {
         try {
           v.pause();
-          v.currentTime = 0;
-
-          // 先読み範囲に入ってるなら src は残して metadata だけ維持
-          if (shouldPreload) {
-            v.preload = "metadata";
-            v.load();
-          } else {
-            v.removeAttribute("src");
-            v.load();
-          }
         } catch {}
       }
     };
 
     run();
-  }, [inView, videoUrl, downloaded, shouldPreload]);
+  }, [inView, videoUrl, downloaded]);
 
-  // ===== DL処理 =====
+  /* ----------------------------------------------------
+   * DL処理（そのまま）
+   * ---------------------------------------------------- */
   const fetchBlobFromSupabase = async (): Promise<Blob> => {
     const { data, error } = await supabase.storage.from(bucket).download(path);
     if (error) throw error;
@@ -285,8 +276,8 @@ export default function VideoItem({
               muted
               playsInline
               loop
-              // srcは effect で付け外し
-              preload="none"
+              // preloadは near で上書きするけど保険で
+              preload="metadata"
               style={{
                 width: "100%",
                 height: "100%",
