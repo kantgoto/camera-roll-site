@@ -558,13 +558,13 @@ setItems(mixed.slice(0, LIMIT));
         }}
       >
         <img
-          src="/SVG/title.svg"
+          src="/SVG/title3.svg"
           style={{ position: "absolute", ...BASE.title }}
           alt=""
           draggable={false}
         />
         <img
-          src="/SVG/body-primary2.svg"
+          src="/SVG/body-primary3.svg"
           style={{ position: "absolute", ...BASE.bodyPrimary2 }}
           alt=""
           draggable={false}
