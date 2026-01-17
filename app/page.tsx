@@ -236,8 +236,10 @@ export default function Page() {
           };
         });
 
-      const mixed = shuffle([...photoItems, ...videoItems]);
-      setItems(mixed);
+const mixed = shuffle([...photoItems, ...videoItems]);
+
+const LIMIT = 100; // ←表示したい数（100でOK）
+setItems(mixed.slice(0, LIMIT));
 
       // 動画だけ：createdAt が取れてるなら先に入れる（ただしJSONが優先で上書きしない）
       setDateLabelMap((prev) => {
